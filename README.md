@@ -1,0 +1,360 @@
+
+<!-- README.md is generated from README.Rmd. Please edit that file -->
+
+# flow field art(?)
+
+## Introduction
+
+-   A few worked examples of a method for creating generative art from
+    flow fields in R
+-   This is a **proof of concept and is not rigorously tested or
+    optimised**
+-   It’s just for fun and hopefully it can be a useful jumping off point
+    for other people to develop further (and please let me know if you
+    do!)
+
+Add tidyverse packages to search path
+
+``` r
+library(tidyverse)
+```
+
+## Noise generation
+
+-   I’ll start by generating the noise field using the `{ambient}`
+    package
+-   I also define some canvas dimensions `x_side` and `y_side` and set a
+    seed for reproducibility
+-   The noise field matrix is re-scaled to range between -90 and 90
+    -   These are the angles that define the direction that flow lines
+        will travel at that point in the flow field
+-   Also create a dataframe of the flow field matrix in order to
+    visualise it with ggplot2
+    -   This is confusing for me but the dataframe version will have a
+        reversed y-axis because a y value of 1 is the bottom row of a
+        plot but it is the top (or first index) row of the matrix. So I
+        will need to plot with a reversed y-axis to get it the right way
+        around (possibly not too important if just making artistic plots
+        of noise)
+
+``` r
+set.seed(1)
+x_side <- 400
+y_side <- 400
+
+# Create a noise field matrix
+m <- 
+  ambient::noise_simplex(
+    c(y_side, x_side),
+    frequency = 0.004,
+    octaves = 2,
+    pertubation = "normal",
+    pertubation_amplitude = 2,
+    fractal = 'billow') |> 
+  scales::rescale(c(-90, 90)) # scale noise values to angles in degrees (-90 to 90)
+
+# Create a dataframe of the noise matrix for demo visualisation
+# (remembering that the y axis will be reversed)
+m_df <- crossing(x=1:ncol(m),  y=1:nrow(m)) |> mutate(angle = as.vector(m))
+```
+
+-   Visualise the noise flow field
+
+``` r
+ggplot() +
+  geom_raster(data = m_df, aes(x, y, fill = angle))+
+  coord_equal()+
+  scale_fill_gradient(low = "black", high = "white")+
+  scale_y_reverse()
+```
+
+<img src="README_files/figure-gfm/unnamed-chunk-4-1.png" width="75%" />
+
+## Flow line generation
+
+-   Now I’ll define a function that takes a flow field `angle_matrix`
+    (like `m` which I made above) and a bunch of other parameters, and
+    returns the x and y coordinates of the polygon that makes a tapered
+    flow field line
+
+``` r
+#' Get the coords of a tapered flow line polygon
+#' 
+#' The x_start and y_start will be used to index columns and rows of the angle_matrix
+#' This means y values from a conventional Cartesian coordinate system will be reversed as y = 1 will be row 1 of the matrix 
+#'
+#' @param x_start x starting point of flow line on angle_matrix
+#' @param y_start y starting point of flow line on angle_matrix
+#' @param step_length step length
+#' @param n_steps number of steps
+#' @param angle_matrix matrix of angles (the field)
+#' @param taper_min min value of taper size
+#' @param taper_max max value of taper size
+ff_polys <- function(
+    x_start, 
+    y_start, 
+    step_length, 
+    n_steps, 
+    angle_matrix, 
+    taper_max, 
+    taper_min){
+  
+  # Initialise vectors with the starting x and y values filled with NAs
+  out_x <- c(x_start, rep(NA, n_steps))
+  out_y <- c(y_start, rep(NA, n_steps))
+  
+  # If the starting point is outside the angle_matrix dimensions, return NULL
+  if(x_start > ncol(angle_matrix) |
+     x_start < 1 |
+     y_start > nrow(angle_matrix) |
+     y_start < 1){
+    return(NULL)
+  }
+  
+  # Loop through each step as we travel across the angle matrix
+  for(i in 1:n_steps){
+  
+    # Get the angle of the nearest flow field point where we are for this iteration
+    a <- angle_matrix[round(out_y[i]), round(out_x[i])]
+    
+    # Compute how far to move in x and y for the given angle and step_length
+    step_x <- cos(a*(pi/180))*step_length
+    step_y <- sin(a*(pi/180))*step_length
+    
+    # Add the distance in x and y to the current location
+    next_x <- out_x[i] + step_x
+    next_y <- out_y[i] + step_y
+    
+    # If the next point in the path sits outside the angle matrix, stop iterating along the path
+    if(next_x > ncol(angle_matrix) |
+       next_x < 1 |
+       next_y > nrow(angle_matrix) |
+       next_y < 1){
+      break
+    }
+    
+    # Append the new x and y location to the output 
+    # (ready to be used as the starting point for the next step iteration)
+    out_x[i+1] <- next_x
+    out_y[i+1] <- next_y
+  }
+  
+  # Return tibble of the x, y, paths
+  # The polygon goes out along x and then back along rev(x)
+  # The y values have a taper added to them on the way out (along x)
+  # and then have a reverse taper subtracted from them on the way back (along rev(x))
+  tibble(x = c(out_x, rev(out_x)),
+         y = c(out_y + seq(taper_min, taper_max, l=length(out_y)), 
+               rev(out_y) - seq(taper_max, taper_min, l=length(out_y)))) |> 
+    # Finally remove any NA entries from the path where the flow line got to the
+    # edge of the angle_matrix and we stopped iterating
+    filter(!is.na(x), !is.na(y))
+}
+```
+
+## Demo example
+
+-   A small example to demonstrate lines on the flow field
+-   Define the starting points of 15 flow lines and their various
+    parameters
+    -   With `step_length = 1` and `n_steps = 200` the flow lines should
+        be 200 units long
+    -   Tapering from 0 to 5 units thick
+-   Run the `ff_polys` function for each flow line starting point,
+    passing the same angle matrix `m`
+-   Then unnest each flow line into a long format dataframe containing
+    the x and y coordinates of each polygon
+
+``` r
+set.seed(10)
+
+# Define starting points and flow line parameters
+starting_params <-
+  tibble(
+    x_start = runif(15, 1, ncol(m)),
+    y_start = runif(15, 1, nrow(m)))  |> 
+  mutate(
+    id = row_number(),
+    step_length = 1,
+    n_steps = 200,
+    taper_max = 5,
+    taper_min = 0)
+
+# Compute the flow line polygon coordinates
+flow_field_coords <-
+  starting_params |> 
+  mutate(
+    paths = pmap(
+      .l = list(x_start = x_start,
+                y_start = y_start,
+                step_length = step_length,
+                n_steps = n_steps,
+                taper_max = taper_max,
+                taper_min = taper_min),
+      .f = ff_polys,
+      angle_matrix = m)) |> 
+  unnest(cols=paths)
+```
+
+-   Visualise the flow lines over the angle matrix
+-   Note that as the tapering is applied as a subtraction and addition
+    to the y-coordinate of the flow line, if a line goes back on itself
+    in x, the tapering will create a polygon that crosses itself
+-   We see that the flow lines are approximately 200 units long
+
+``` r
+ggplot() +
+  geom_raster(data = m_df, aes(x, y, fill = angle))+
+  geom_polygon(
+    data = flow_field_coords, 
+    aes(x, y, group = id), 
+    col = 1, 
+    fill = "green",
+    alpha = 1/2)+
+  geom_point(data = starting_params, aes(x_start, y_start), size = 2, col = "black")+
+  coord_equal()+
+  scale_fill_gradient2()+
+  scale_y_reverse()
+```
+
+<img src="README_files/figure-gfm/unnamed-chunk-7-1.png" width="75%" />
+
+## Art output
+
+-   Now run again with more flow lines and some personal choices for
+    aesthetic qualities
+-   I have chosen to fill each polygon based on its start point relative
+    to the centre of the angle matrix
+
+``` r
+set.seed(1)
+n_flow_lines <- 2000
+
+# Define starting points and flow line parameters
+starting_params <-
+  tibble(
+    x_start = runif(n_flow_lines, 1, ncol(m)),
+    y_start = runif(n_flow_lines, 1, nrow(m))) |> 
+  mutate(
+    id = row_number(),
+    step_length = 0.1,
+    n_steps = 5000,
+    taper_max = 5,
+    taper_min = 0)
+
+# Compute flow line polygon coordinates
+flow_field_coords <-
+  starting_params |> 
+  mutate(
+    paths = pmap(
+      .l = list(x_start = x_start,
+                y_start = y_start,
+                step_length = step_length,
+                n_steps = n_steps,
+                taper_max = taper_max,
+                taper_min = taper_min),
+      .f = ff_polys,
+      angle_matrix = m)) |> 
+  unnest(cols=paths)
+
+# Render plot
+ggplot() + 
+  geom_polygon(
+    data = flow_field_coords, 
+    aes(x, y, group = id, 
+        fill = sqrt((nrow(m)/2 - y_start)^2 + (ncol(m)/2 - x_start)^2)),
+    col = NA,
+    alpha = 0.4)+
+  coord_equal()+
+  scale_fill_viridis_c(option = "plasma", direction = -1)+
+  scale_y_reverse()+
+  theme_void()+
+  theme(
+    panel.background = element_rect(fill = "black", color = NA),
+    legend.position = "")
+```
+
+<img src="README_files/figure-gfm/unnamed-chunk-8-1.png" width="75%" />
+
+## Using an image as a flow field
+
+### Read image
+
+``` r
+library(magick)
+#> Linking to ImageMagick 6.9.12.3
+#> Enabled features: cairo, freetype, fftw, ghostscript, heic, lcms, pango, raw, rsvg, webp
+#> Disabled features: fontconfig, x11
+img <- image_read('https://i.pinimg.com/564x/e2/43/c0/e243c0f7b9ee95151d2f2c045367047c.jpg')
+img
+```
+
+<img src="README_files/figure-gfm/unnamed-chunk-9-1.png" width="20%" />
+
+### Process image
+
+-   Define some parameters for imahe size and the number of flow lines
+    wanted
+-   Resize image, greyscale, blur, flip and convert to matrix rescaled
+    to angle range (0 to 180 degrees in this case)
+
+``` r
+x_side <- 200
+n_flow_lines <- 4000
+
+m <-
+  img |> 
+  image_resize(paste0(x_side, "x")) |>
+  image_convert(colorspace = "gray") |>
+  image_flip() |>
+  image_despeckle(2) |>
+  image_blur(radius = 4, sigma=5) |>
+  image_raster(tidy = FALSE) |>
+  col2rgb() |>
+  magrittr::extract(1,) |>
+  matrix(ncol = x_side, byrow = TRUE) |>
+  scales::rescale(c(0, 180))
+```
+
+-   Generate flow lines and plot as above
+
+``` r
+set.seed(1)
+starting_params <-
+  tibble(x_start = runif(n_flow_lines, 1, ncol(m)),
+         y_start = runif(n_flow_lines, 1, nrow(m))) |>
+  mutate(id = row_number(),
+         step_length = 1,
+         n_steps = 300,
+         taper_max = 5,
+         taper_min = 0)
+
+flow_field_coords <-
+  starting_params |> 
+  mutate(paths = pmap(
+    .l = list(x_start = x_start,
+              y_start = y_start,
+              step_length = step_length,
+              n_steps = n_steps,
+              taper_max = taper_max,
+              taper_min = taper_min),
+    .f = ff_polys,
+    angle_matrix = m)) |> 
+  unnest(cols=paths)
+
+ggplot() + 
+  geom_polygon(
+    data = flow_field_coords, 
+    aes(x, y, group = id, 
+        fill = sqrt((nrow(m)/2 - y_start)^2 + (ncol(m)/2 - x_start)^2)),
+    col = NA,
+    alpha = 0.4)+
+  coord_equal()+
+  scale_fill_viridis_c(option = "mako", direction = -1)+
+  theme_void()+
+  theme(
+    panel.background = element_rect(fill = "black", color = NA),
+    legend.position = "")
+```
+
+<img src="README_files/figure-gfm/unnamed-chunk-11-1.png" width="75%" />
