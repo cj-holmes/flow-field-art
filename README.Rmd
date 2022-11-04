@@ -38,7 +38,8 @@ library(tidyverse)
   * This is confusing for me but the dataframe version will have a reversed y-axis because a y value of 1 is the bottom row of a plot but it is the top (or first index) row of the matrix. So I will need to plot with a reversed y-axis to get it the right way around (possibly not too important if just making artistic plots of noise)
   
 ```{r}
-set.seed(1)
+global_seed <- 4
+set.seed(global_seed)
 x_side <- 400
 y_side <- 400
 
@@ -153,7 +154,7 @@ ff_polys <- function(
 * Run the `ff_polys` function for each flow line starting point, passing the same angle matrix `m`
 * Then unnest each flow line into a long format dataframe containing the x and y coordinates of each polygon
 ```{r}
-set.seed(10)
+set.seed(global_seed)
 
 # Define starting points and flow line parameters
 starting_params <-
@@ -205,7 +206,7 @@ ggplot() +
 * Now run again with more flow lines and some personal choices for aesthetic qualities
 * I have chosen to fill each polygon based on its start point relative to the centre of the angle matrix
 ```{r}
-set.seed(1)
+set.seed(global_seed)
 n_flow_lines <- 2000
 
 # Define starting points and flow line parameters
@@ -285,7 +286,7 @@ m <-
 
 * Generate flow lines and plot as above
 ```{r}
-set.seed(1)
+set.seed(global_seed)
 starting_params <-
   tibble(x_start = runif(n_flow_lines, 1, ncol(m)),
          y_start = runif(n_flow_lines, 1, nrow(m))) |>

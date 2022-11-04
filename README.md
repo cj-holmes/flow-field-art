@@ -38,7 +38,8 @@ library(tidyverse)
         of noise)
 
 ``` r
-set.seed(1)
+global_seed <- 4
+set.seed(global_seed)
 x_side <- 400
 y_side <- 400
 
@@ -166,7 +167,7 @@ ff_polys <- function(
     the x and y coordinates of each polygon
 
 ``` r
-set.seed(10)
+set.seed(global_seed)
 
 # Define starting points and flow line parameters
 starting_params <-
@@ -227,7 +228,7 @@ ggplot() +
     to the centre of the angle matrix
 
 ``` r
-set.seed(1)
+set.seed(global_seed)
 n_flow_lines <- 2000
 
 # Define starting points and flow line parameters
@@ -319,7 +320,7 @@ m <-
 -   Generate flow lines and plot as above
 
 ``` r
-set.seed(1)
+set.seed(global_seed)
 starting_params <-
   tibble(x_start = runif(n_flow_lines, 1, ncol(m)),
          y_start = runif(n_flow_lines, 1, nrow(m))) |>
